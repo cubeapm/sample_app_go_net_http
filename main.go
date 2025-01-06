@@ -14,10 +14,16 @@ import (
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 var rdb *redis.Client
+var mdb *mongo.Client
 
 func main() {
 	if err := run(); err != nil {
@@ -26,14 +32,25 @@ func main() {
 }
 
 func run() (err error) {
+	// initialize redis
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
-
-	// Enable tracing instrumentation.
+	// Enable tracing instrumentation
 	if err := redisotel.InstrumentTracing(rdb); err != nil {
 		panic(err)
 	}
+
+	// initialize mongo
+	mdbOpts := options.Client()
+	// Enable tracing instrumentation
+	mdbOpts.Monitor = otelmongo.NewMonitor()
+	mdbOpts.ApplyURI("mongodb://mongo:27017")
+	mdb, _ = mongo.Connect(context.Background(), mdbOpts)
+	_ = mdb.Ping(context.Background(), readpref.Primary())
+	defer func() {
+		_ = mdb.Disconnect(context.Background())
+	}()
 
 	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -100,7 +117,9 @@ func newHTTPHandler() http.Handler {
 	// Register handlers.
 	handleFunc("/", indexFunc)
 	handleFunc("/param/{param}", paramFunc)
+	handleFunc("/exception", exceptionFunc)
 	handleFunc("/redis", redisFunc)
+	handleFunc("/mongo", mongoFunc)
 
 	return mux
 }
@@ -116,6 +135,10 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Got param: %s", param)
 }
 
+func exceptionFunc(w http.ResponseWriter, r *http.Request) {
+	panic("sample panic")
+}
+
 func redisFunc(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	val, err := rdb.Get(ctx, "key").Result()
@@ -124,4 +147,10 @@ func redisFunc(w http.ResponseWriter, r *http.Request) {
 	} else {
 		fmt.Fprintf(w, "Redis called: %s", val)
 	}
+}
+
+func mongoFunc(w http.ResponseWriter, r *http.Request) {
+	collection := mdb.Database("sample_db").Collection("sampleCollection")
+	_ = collection.FindOne(r.Context(), bson.D{{Key: "name", Value: "dummy"}})
+	fmt.Fprintf(w, "Mongo called")
 }

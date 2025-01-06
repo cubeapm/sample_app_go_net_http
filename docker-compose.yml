@@ -16,8 +16,13 @@ services:
       - "8000:8000"
     depends_on:
       - redis
+      - mongo
     restart: always
 
   redis:
     image: redis:alpine3.18
     container_name: cube_go_net_http_redis
+
+  mongo:
+    image: mongo:7.0.12
+    container_name: cube_go_net_http_mongo
