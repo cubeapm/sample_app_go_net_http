@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
+var hcl http.Client
 var rdb *redis.Client
 var mdb *mongo.Client
 
@@ -32,6 +33,11 @@ func main() {
 }
 
 func run() (err error) {
+	// initialize http client
+	hcl = http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+
 	// initialize redis
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
@@ -118,6 +124,7 @@ func newHTTPHandler() http.Handler {
 	handleFunc("/", indexFunc)
 	handleFunc("/param/{param}", paramFunc)
 	handleFunc("/exception", exceptionFunc)
+	handleFunc("/api", apiFunc)
 	handleFunc("/redis", redisFunc)
 	handleFunc("/mongo", mongoFunc)
 
@@ -137,6 +144,18 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
 	panic("sample panic")
+}
+
+func apiFunc(w http.ResponseWriter, r *http.Request) {
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://localhost:8000/", nil)
+	resp, err := hcl.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err == nil {
+			fmt.Fprintf(w, "Got api: %s", respBody)
+		}
+	}
 }
 
 func redisFunc(w http.ResponseWriter, r *http.Request) {
