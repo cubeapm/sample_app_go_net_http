@@ -14,17 +14,26 @@ import (
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
+	apiTrace "go.opentelemetry.io/otel/trace"
 )
 
+const kafkaTopicName = "sample_topic"
+
+var tracer apiTrace.Tracer
 var hcl http.Client
 var rdb *redis.Client
 var mdb *mongo.Client
+var kcn *kafka.Conn
 
 func main() {
 	if err := run(); err != nil {
@@ -52,11 +61,23 @@ func run() (err error) {
 	// Enable tracing instrumentation
 	mdbOpts.Monitor = otelmongo.NewMonitor()
 	mdbOpts.ApplyURI("mongodb://mongo:27017")
-	mdb, _ = mongo.Connect(context.Background(), mdbOpts)
-	_ = mdb.Ping(context.Background(), readpref.Primary())
+	mdb, err = mongo.Connect(context.Background(), mdbOpts)
+	if err != nil {
+		panic(err)
+	}
+	err = mdb.Ping(context.Background(), readpref.Primary())
+	if err != nil {
+		panic(err)
+	}
 	defer func() {
 		_ = mdb.Disconnect(context.Background())
 	}()
+
+	// initialize kafka
+	kcn, err = kafka.DialLeader(context.Background(), "tcp", "kafka:9092", kafkaTopicName, 0)
+	if err != nil {
+		panic(err)
+	}
 
 	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -71,6 +92,9 @@ func run() (err error) {
 	defer func() {
 		err = errors.Join(err, otelShutdown(context.Background()))
 	}()
+
+	// initialize tracer
+	tracer = otel.Tracer(os.Getenv("OTEL_SERVICE_NAME"))
 
 	// Start HTTP server.
 	srv := &http.Server{
@@ -127,6 +151,8 @@ func newHTTPHandler() http.Handler {
 	handleFunc("/api", apiFunc)
 	handleFunc("/redis", redisFunc)
 	handleFunc("/mongo", mongoFunc)
+	handleFunc("/kafka/produce", kafkaProduceFunc)
+	handleFunc("/kafka/consume", kafkaConsumeFunc)
 
 	return mux
 }
@@ -172,4 +198,47 @@ func mongoFunc(w http.ResponseWriter, r *http.Request) {
 	collection := mdb.Database("sample_db").Collection("sampleCollection")
 	_ = collection.FindOne(r.Context(), bson.D{{Key: "name", Value: "dummy"}})
 	fmt.Fprintf(w, "Mongo called")
+}
+
+func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.Start(r.Context(), "publish "+kafkaTopicName, apiTrace.WithSpanKind(apiTrace.SpanKindProducer))
+	span.SetAttributes(
+		semconv.MessagingSystemKafka,
+		semconv.MessagingOperationPublish,
+		semconv.MessagingDestinationName(kafkaTopicName),
+		// semconv.ServerAddress(""),
+		// semconv.MessagingKafkaMessageKey(""),
+		// semconv.MessagingMessageBodySize(14),
+		// semconv.MessagingBatchMessageCount(3),
+		// attribute.String("key", "value"), // "go.opentelemetry.io/otel/attribute"
+	)
+	defer span.End()
+
+	kcn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_, err := kcn.WriteMessages(
+		kafka.Message{Value: []byte("one!")},
+		kafka.Message{Value: []byte("two!")},
+		kafka.Message{Value: []byte("three!")},
+	)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	fmt.Fprintf(w, "Kafka produced")
+}
+
+func kafkaConsumeFunc(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.Start(r.Context(), "process "+kafkaTopicName, apiTrace.WithSpanKind(apiTrace.SpanKindConsumer))
+	span.SetAttributes(
+		semconv.MessagingSystemKafka,
+		semconv.MessagingOperationDeliver,
+		semconv.MessagingDestinationName(kafkaTopicName),
+	)
+	defer span.End()
+
+	kcn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = kcn.ReadBatch(10e3, 1e6) // fetch 10KB min, 1MB max
+
+	fmt.Fprintf(w, "Kafka consumed")
 }
