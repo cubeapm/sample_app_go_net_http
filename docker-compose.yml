@@ -18,6 +18,7 @@ services:
       - redis
       - mongo
       - kafka
+      - clickhouse
     restart: always
 
   redis:
@@ -27,6 +28,28 @@ services:
   mongo:
     image: mongo:7.0.12
     container_name: cube_go_net_http_mongo
+
+  clickhouse:
+    image: "clickhouse/clickhouse-server:24.8.11.5-alpine"
+    user: "101:101"
+    container_name: clickhouse
+    volumes:
+      - ./clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ./clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    depends_on:
+      - clickhouse-keeper
+
+  clickhouse-keeper:
+    image: "clickhouse/clickhouse-keeper:24.8.11.5-alpine"
+    user: "101:101"
+    container_name: clickhouse-keeper
+    volumes:
+      - ./clickhouse/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml
+    ports:
+      - "9181:9181"
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0

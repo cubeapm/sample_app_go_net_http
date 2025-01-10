@@ -12,6 +12,8 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
@@ -33,6 +35,7 @@ var tracer apiTrace.Tracer
 var hcl http.Client
 var rdb *redis.Client
 var mdb *mongo.Client
+var ccn driver.Conn
 var kcn *kafka.Conn
 
 func main() {
@@ -53,7 +56,7 @@ func run() (err error) {
 	})
 	// Enable tracing instrumentation
 	if err := redisotel.InstrumentTracing(rdb); err != nil {
-		panic(err)
+		return err
 	}
 
 	// initialize mongo
@@ -63,20 +66,32 @@ func run() (err error) {
 	mdbOpts.ApplyURI("mongodb://mongo:27017")
 	mdb, err = mongo.Connect(context.Background(), mdbOpts)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	err = mdb.Ping(context.Background(), readpref.Primary())
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer func() {
 		_ = mdb.Disconnect(context.Background())
 	}()
 
+	// initialize clickhouse
+	ccn, err = clickhouse.Open(&clickhouse.Options{
+		Addr: []string{"clickhouse:9000"},
+	})
+	if err != nil {
+		return err
+	}
+	err = ccn.Ping(context.Background())
+	if err != nil {
+		return err
+	}
+
 	// initialize kafka
 	kcn, err = kafka.DialLeader(context.Background(), "tcp", "kafka:9092", kafkaTopicName, 0)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// Handle SIGINT (CTRL+C) gracefully.
@@ -151,6 +166,7 @@ func newHTTPHandler() http.Handler {
 	handleFunc("/api", apiFunc)
 	handleFunc("/redis", redisFunc)
 	handleFunc("/mongo", mongoFunc)
+	handleFunc("/clickhouse", clickhouseFunc)
 	handleFunc("/kafka/produce", kafkaProduceFunc)
 	handleFunc("/kafka/consume", kafkaConsumeFunc)
 
@@ -198,6 +214,26 @@ func mongoFunc(w http.ResponseWriter, r *http.Request) {
 	collection := mdb.Database("sample_db").Collection("sampleCollection")
 	_ = collection.FindOne(r.Context(), bson.D{{Key: "name", Value: "dummy"}})
 	fmt.Fprintf(w, "Mongo called")
+}
+
+func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.Start(r.Context(), "SELECT <dbname>.<tablename>", apiTrace.WithSpanKind(apiTrace.SpanKindClient))
+	span.SetAttributes(
+		semconv.DBSystemClickhouse,
+		// semconv.DBName(""),
+		semconv.DBOperation("SELECT"),
+		// semconv.DBSQLTable(""),
+		// semconv.DBStatement(""),
+	)
+	defer span.End()
+
+	res, err := ccn.Query(r.Context(), "SELECT NOW()")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	fmt.Fprintf(w, "Clickhouse called: %v", res.Columns())
 }
 
 func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
