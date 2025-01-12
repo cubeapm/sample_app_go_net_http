@@ -185,7 +185,7 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
-	panic("sample panic")
+	w.WriteHeader(http.StatusInternalServerError)
 }
 
 func apiFunc(w http.ResponseWriter, r *http.Request) {
