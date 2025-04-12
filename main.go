@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
@@ -23,6 +25,7 @@ import (
 
 const kafkaTopicName = "sample_topic"
 
+var app *newrelic.Application
 var hcl http.Client
 var rdb *redis.Client
 var mdb *mongo.Client
@@ -77,6 +80,11 @@ func run() (err error) {
 		return err
 	}
 
+	// initialize newrelic
+	app, err := newrelic.NewApplication(
+		newrelic.ConfigFromEnvironment(),
+	)
+
 	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -87,7 +95,7 @@ func run() (err error) {
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 		ReadTimeout:  time.Second,
 		WriteTimeout: 10 * time.Second,
-		Handler:      newHTTPHandler(),
+		Handler:      newHTTPHandler(app),
 	}
 	srvErr := make(chan error, 1)
 	go func() {
@@ -110,13 +118,14 @@ func run() (err error) {
 	return
 }
 
-func newHTTPHandler() http.Handler {
+func newHTTPHandler(app *newrelic.Application) http.Handler {
 	mux := http.NewServeMux()
 
 	// handleFunc is a replacement for mux.HandleFunc
 	// which enriches the handler's HTTP instrumentation.
 	handleFunc := func(pattern string, handlerFunc func(http.ResponseWriter, *http.Request)) {
-		mux.HandleFunc(pattern, handlerFunc)
+		route, wrapped := newrelic.WrapHandleFunc(app, pattern, handlerFunc)
+		mux.HandleFunc(route, wrapped)
 	}
 
 	// Register handlers.
@@ -145,12 +154,26 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
+	if txn != nil {
+		txn.NoticeError(errors.New("Something broke"))
+	}
+
 	w.WriteHeader(http.StatusInternalServerError)
+	fmt.Fprint(w, "Something went wrong")
 }
 
 func apiFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://localhost:8000/", nil)
+	req = req.WithContext(newrelic.NewContext(r.Context(), txn))
+	// Start the ExternalSegment
+	extSeg := newrelic.ExternalSegment{
+		StartTime: newrelic.StartSegmentNow(txn),
+		Request:   req,
+	}
 	resp, err := hcl.Do(req)
+	extSeg.End() // End the segment after request completes
 	if err == nil {
 		defer resp.Body.Close()
 		respBody, err := io.ReadAll(resp.Body)
@@ -161,6 +184,15 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func redisFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
+	seg := newrelic.DatastoreSegment{
+		StartTime:  txn.StartSegmentNow(),
+		Product:    newrelic.DatastoreRedis,
+		Collection: "key",
+		Operation:  "GET",
+	}
+	defer seg.End()
+
 	ctx := r.Context()
 	val, err := rdb.Get(ctx, "key").Result()
 	if err != nil {
@@ -171,12 +203,29 @@ func redisFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func mongoFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
+	seg := newrelic.DatastoreSegment{
+		StartTime:  newrelic.StartSegmentNow(txn),
+		Product:    newrelic.DatastoreMongoDB,
+		Collection: "sampleCollection",
+		Operation:  "FindOne",
+	}
+	defer seg.End()
+
 	collection := mdb.Database("sample_db").Collection("sampleCollection")
 	_ = collection.FindOne(r.Context(), bson.D{{Key: "name", Value: "dummy"}})
 	fmt.Fprintf(w, "Mongo called")
 }
 
 func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
+	seg := newrelic.DatastoreSegment{
+		StartTime:  newrelic.StartSegmentNow(txn),
+		Product:    "ClickHouse",
+		Collection: "system",
+		Operation:  "SELECT",
+	}
+	defer seg.End()
 
 	res, err := ccn.Query(r.Context(), "SELECT NOW()")
 	if err != nil {
@@ -187,6 +236,14 @@ func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
+	txn := newrelic.FromContext(r.Context())
+	seg := newrelic.MessageProducerSegment{
+		StartTime:       newrelic.StartSegmentNow(txn),
+		Library:         "kafka-go",
+		DestinationType: newrelic.MessageExchange,
+		DestinationName: kafkaTopicName,
+	}
+	defer seg.End()
 
 	kcn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err := kcn.WriteMessages(
