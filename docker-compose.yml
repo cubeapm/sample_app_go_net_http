@@ -4,6 +4,9 @@ services:
     build:
       context: .
     container_name: cube_go_net_http_net_http
+    environment:
+      - ELASTIC_APM_SERVICE_NAME=cube_sample_go_net_http_elastic
+      - ELASTIC_APM_SERVER_URL=http://host.docker.internal:3130
     ports:
       - "8000:8000"
     depends_on:

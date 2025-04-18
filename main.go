@@ -19,6 +19,11 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+
+	"go.elastic.co/apm/v2"
+
+	"go.elastic.co/apm/module/apmhttp/v2"
+	"go.elastic.co/apm/module/apmmongo/v2"
 )
 
 const kafkaTopicName = "sample_topic"
@@ -43,10 +48,10 @@ func run() (err error) {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
-
 	// initialize mongo
-	mdbOpts := options.Client()
-	mdbOpts.ApplyURI("mongodb://mongo:27017")
+	mdbOpts := options.Client().
+		ApplyURI("mongodb://mongo:27017").
+		SetMonitor(apmmongo.CommandMonitor())
 	mdb, err = mongo.Connect(context.Background(), mdbOpts)
 	if err != nil {
 		return err
@@ -87,7 +92,7 @@ func run() (err error) {
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 		ReadTimeout:  time.Second,
 		WriteTimeout: 10 * time.Second,
-		Handler:      newHTTPHandler(),
+		Handler:      apmhttp.Wrap(newHTTPHandler()),
 	}
 	srvErr := make(chan error, 1)
 	go func() {
