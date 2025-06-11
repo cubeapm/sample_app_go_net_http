@@ -4,6 +4,10 @@ services:
     build:
       context: .
     container_name: cube_go_net_http_net_http
+    environment:
+      - DD_SERVICE=cube_sample_go_net_http_datadog
+      # send traces to CubeAPM
+      - DD_TRACE_AGENT_URL=https://d866-103-100-219-14.ngrok-free.app
     ports:
       - "8000:8000"
     depends_on:

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
@@ -30,6 +31,8 @@ var ccn driver.Conn
 var kcn *kafka.Conn
 
 func main() {
+	tracer.Start()
+	defer tracer.Stop()
 	if err := run(); err != nil {
 		log.Fatalln(err)
 	}
