@@ -20,19 +20,20 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
-	"go.elastic.co/apm/v2"
-
 	"go.elastic.co/apm/module/apmhttp/v2"
 	"go.elastic.co/apm/module/apmmongo/v2"
+	"go.elastic.co/apm/v2"
 )
 
 const kafkaTopicName = "sample_topic"
 
-var hcl http.Client
-var rdb *redis.Client
-var mdb *mongo.Client
-var ccn driver.Conn
-var kcn *kafka.Conn
+var (
+	hcl http.Client
+	rdb *redis.Client
+	mdb *mongo.Client
+	ccn driver.Conn
+	kcn *kafka.Conn
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -42,7 +43,7 @@ func main() {
 
 func run() (err error) {
 	// initialize http client
-	hcl = http.Client{}
+	hcl = *apmhttp.WrapClient(&http.Client{})
 
 	// initialize redis
 	rdb = redis.NewClient(&redis.Options{
@@ -139,17 +140,28 @@ func newHTTPHandler() http.Handler {
 }
 
 func indexFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// Start a custom span named "indexFunc"
+	span, ctx := apm.StartSpan(ctx, "indexFunc", "handler")
+	defer span.End()
 	if _, err := io.WriteString(w, "index called"); err != nil {
 		log.Printf("Write failed: %v\n", err)
 	}
 }
 
 func paramFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// Start custom span
+	span, ctx := apm.StartSpan(ctx, "paramFunc", "handler")
+	defer span.End()
 	param := r.PathValue("param")
 	fmt.Fprintf(w, "Got param: %s", param)
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	err := fmt.Errorf("Exception called")
+	apm.CaptureError(ctx, err).Send()
 	w.WriteHeader(http.StatusInternalServerError)
 }
 
@@ -167,6 +179,8 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 
 func redisFunc(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	span, ctx := apm.StartSpan(ctx, "Redis GET", "db.redis.query")
+	defer span.End()
 	val, err := rdb.Get(ctx, "key").Result()
 	if err != nil {
 		io.WriteString(w, err.Error())
@@ -182,6 +196,9 @@ func mongoFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	span, ctx := apm.StartSpan(ctx, "Clickhouse Query", "db.clickhouse.query")
+	defer span.End()
 
 	res, err := ccn.Query(r.Context(), "SELECT NOW()")
 	if err != nil {
@@ -192,6 +209,10 @@ func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// Create a custom span for the Kafka produce operation
+	span, ctx := apm.StartSpan(ctx, "Kafka Produce", "messaging.kafka.produce")
+	defer span.End()
 
 	kcn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err := kcn.WriteMessages(
@@ -207,6 +228,9 @@ func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func kafkaConsumeFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	span, ctx := apm.StartSpan(ctx, "Kafka Consume Batch", "messaging.kafka.consume")
+	defer span.End()
 
 	kcn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_ = kcn.ReadBatch(10e3, 1e6) // fetch 10KB min, 1MB max
