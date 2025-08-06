@@ -160,7 +160,6 @@ func exceptionFunc(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusInternalServerError)
-	fmt.Fprint(w, "Something went wrong")
 }
 
 func apiFunc(w http.ResponseWriter, r *http.Request) {
