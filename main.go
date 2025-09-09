@@ -13,22 +13,28 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	mongotrace "github.com/DataDog/dd-trace-go/contrib/go.mongodb.org/mongo-driver.v2/v2/mongo"
+	ddhttp "github.com/DataDog/dd-trace-go/contrib/net/http/v2"
+	kafkatrace "github.com/DataDog/dd-trace-go/contrib/segmentio/kafka-go/v2"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	redistrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/redis/go-redis.v9"
 )
 
 const kafkaTopicName = "sample_topic"
 
 var hcl http.Client
-var rdb *redis.Client
+var rdb redis.UniversalClient
 var mdb *mongo.Client
 var ccn driver.Conn
 var kcn *kafka.Conn
+var kw *kafkatrace.KafkaWriter
+var kr *kafkatrace.Reader
 
 func main() {
 	tracer.Start()
@@ -40,17 +46,20 @@ func main() {
 
 func run() (err error) {
 	// initialize http client
-	hcl = http.Client{}
+	hcl = *ddhttp.WrapClient(&http.Client{})
 
 	// initialize redis
-	rdb = redis.NewClient(&redis.Options{
+	rdb = redistrace.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
 
 	// initialize mongo
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	mdbOpts := options.Client()
 	mdbOpts.ApplyURI("mongodb://mongo:27017")
-	mdb, err = mongo.Connect(context.Background(), mdbOpts)
+	mdbOpts.Monitor = mongotrace.NewMonitor()
+	mdb, err = mongo.Connect(mdbOpts)
 	if err != nil {
 		return err
 	}
@@ -75,10 +84,26 @@ func run() (err error) {
 	}
 
 	// initialize kafka
-	kcn, err = kafka.DialLeader(context.Background(), "tcp", "kafka:9092", kafkaTopicName, 0)
-	if err != nil {
-		return err
-	}
+	// Producer
+	kw = kafkatrace.NewWriter(kafka.WriterConfig{
+		Brokers: []string{"kafka:9092"},
+		Topic:   kafkaTopicName,
+	})
+
+	// Consumer
+	kr = kafkatrace.NewReader(kafka.ReaderConfig{
+		Brokers: []string{"kafka:9092"},
+		Topic:   kafkaTopicName,
+		GroupID: "my-group",
+	})
+	defer func() {
+		if kw != nil {
+			_ = kw.Close()
+		}
+		if kr != nil {
+			_ = kr.Close()
+		}
+	}()
 
 	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -119,7 +144,8 @@ func newHTTPHandler() http.Handler {
 	// handleFunc is a replacement for mux.HandleFunc
 	// which enriches the handler's HTTP instrumentation.
 	handleFunc := func(pattern string, handlerFunc func(http.ResponseWriter, *http.Request)) {
-		mux.HandleFunc(pattern, handlerFunc)
+		wrapped := ddhttp.WrapHandler(http.HandlerFunc(handlerFunc), "go-sample-app", pattern)
+		mux.Handle(pattern, wrapped)
 	}
 
 	// Register handlers.
@@ -148,7 +174,18 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
+	span, _ := tracer.StartSpanFromContext(
+		r.Context(),
+		"http.handler.exception",
+		tracer.ResourceName("exception"),
+		tracer.SpanType("web"),
+	)
+	defer span.Finish()
+
+	span.SetTag("error", true)
+	span.SetTag("http.status_code", http.StatusInternalServerError)
 	w.WriteHeader(http.StatusInternalServerError)
+	fmt.Fprint(w, "Internal Server Error")
 }
 
 func apiFunc(w http.ResponseWriter, r *http.Request) {
@@ -190,9 +227,10 @@ func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
-	kcn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err := kcn.WriteMessages(
+	err := kw.WriteMessages(ctx,
 		kafka.Message{Value: []byte("one!")},
 		kafka.Message{Value: []byte("two!")},
 		kafka.Message{Value: []byte("three!")},
@@ -205,9 +243,13 @@ func kafkaProduceFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func kafkaConsumeFunc(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
-	kcn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	_ = kcn.ReadBatch(10e3, 1e6) // fetch 10KB min, 1MB max
-
-	fmt.Fprintf(w, "Kafka consumed")
+	msg, err := kr.ReadMessage(ctx)
+	if err != nil {
+		fmt.Fprintf(w, "Kafka consume error: %v", err)
+		return
+	}
+	fmt.Fprintf(w, "Kafka consumed: %s", string(msg.Value))
 }
