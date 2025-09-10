@@ -217,11 +217,22 @@ func mongoFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func clickhouseFunc(w http.ResponseWriter, r *http.Request) {
-
-	res, err := ccn.Query(r.Context(), "SELECT NOW()")
+	span, ctx := tracer.StartSpanFromContext(
+		r.Context(),
+		"clickhouse.query",
+		tracer.ResourceName("SELECT NOW()"),
+		tracer.Tag("component", "clickhouse"),
+		tracer.Tag("db.system", "clickhouse"),
+	)
+	defer span.Finish()
+	res, err := ccn.Query(ctx, "SELECT NOW()")
 	if err != nil {
 		fmt.Fprintf(w, "Clickhouse query error: %v", err)
+		return
 	}
+	span.SetTag("span.kind", "client")
+	span.SetTag("db.statement", "SELECT NOW()")
+	span.SetTag("db.rows", len(res.Columns()))
 
 	fmt.Fprintf(w, "Clickhouse called: %v", res.Columns())
 }
