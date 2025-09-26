@@ -167,12 +167,9 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://localhost:8000/", nil)
 	req = req.WithContext(newrelic.NewContext(r.Context(), txn))
 	// Start the ExternalSegment
-	extSeg := newrelic.ExternalSegment{
-		StartTime: newrelic.StartSegmentNow(txn),
-		Request:   req,
-	}
+	seg := newrelic.StartExternalSegment(txn, req)
 	resp, err := hcl.Do(req)
-	extSeg.End() // End the segment after request completes
+	seg.End() // End the segment after request completes
 	if err == nil {
 		defer resp.Body.Close()
 		respBody, err := io.ReadAll(resp.Body)
