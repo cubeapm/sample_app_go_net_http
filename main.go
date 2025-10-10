@@ -14,6 +14,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	sqltrace "github.com/DataDog/dd-trace-go/contrib/database/sql/v2"
 	mongotrace "github.com/DataDog/dd-trace-go/contrib/go.mongodb.org/mongo-driver.v2/v2/mongo"
 	ddhttp "github.com/DataDog/dd-trace-go/contrib/net/http/v2"
 	kafkatrace "github.com/DataDog/dd-trace-go/contrib/segmentio/kafka-go/v2"
@@ -52,7 +53,7 @@ func run() (err error) {
 	hcl = *ddhttp.WrapClient(&http.Client{})
 
 	// initialize mysql
-	mysqldb, err = sql.Open("mysql", "root:root@tcp(mysql:3306)/test")
+	mysqldb, err = sqltrace.Open("mysql", "root:root@tcp(mysql:3306)/test")
 	if err != nil {
 		return err
 	}

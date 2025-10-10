@@ -85,6 +85,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
+	github.com/DataDog/dd-trace-go/contrib/database/sql/v2 v2.2.3
 	github.com/DataDog/dd-trace-go/contrib/go.mongodb.org/mongo-driver.v2/v2 v2.2.3
 	github.com/DataDog/dd-trace-go/contrib/net/http/v2 v2.2.3
 	github.com/DataDog/dd-trace-go/contrib/segmentio/kafka-go/v2 v2.2.3
