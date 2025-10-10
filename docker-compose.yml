@@ -20,12 +20,24 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      - mysql
       - redis
       - mongo
       - kafka
       - clickhouse
     restart: always
 
+  mysql:
+    image: mysql:8.0
+    container_name: cube_go_net_http_mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+    volumes:
+      - cube_go_net_http_mysql:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    
   redis:
     image: redis:alpine3.18
     container_name: cube_go_net_http_redis
@@ -89,3 +101,6 @@ services:
       - 19000:9000
     environment:
       KAFKA_BROKERCONNECT: kafka:29092
+
+volumes:
+  cube_go_net_http_mysql:
