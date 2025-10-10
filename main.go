@@ -198,8 +198,16 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 func mysqlFunc(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	txn := newrelic.FromContext(r.Context())
+	seg := newrelic.DatastoreSegment{
+		StartTime:  txn.StartSegmentNow(),
+		Product:    newrelic.DatastoreMySQL,
+		Collection: "test",
+		Operation:  "SELECT",
+	}
 	var now string
 	err := mysqldb.QueryRowContext(ctx, "SELECT NOW()").Scan(&now)
+	seg.End()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("MySQL query error: %v", err), http.StatusInternalServerError)
 		return
