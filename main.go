@@ -218,14 +218,27 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 
 func mysqlFunc(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// Start custom span for this DB query
+	ctx, span := tracer.Start(ctx, "mysql.query", apiTrace.WithSpanKind(apiTrace.SpanKindClient))
+	span.SetAttributes(
+		semconv.DBSystemMySQL,
+		semconv.DBOperation("SELECT"),
+		semconv.DBStatement("SELECT NOW()"),
+		semconv.ServerAddress("mysql"),
+		semconv.ServerPort(3306),
+	)
+	defer span.End()
 
 	var now string
 	err := mysqldb.QueryRowContext(ctx, "SELECT NOW()").Scan(&now)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		http.Error(w, fmt.Sprintf("MySQL query error: %v", err), http.StatusInternalServerError)
 		return
 	}
-
+	// Successful query — mark span OK
+	span.SetStatus(codes.Ok, "success")
 	fmt.Fprintf(w, "MySQL called: %s", now)
 }
 
