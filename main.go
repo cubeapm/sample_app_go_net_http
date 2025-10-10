@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
@@ -24,6 +26,7 @@ import (
 const kafkaTopicName = "sample_topic"
 
 var hcl http.Client
+var mysqldb *sql.DB
 var rdb *redis.Client
 var mdb *mongo.Client
 var ccn driver.Conn
@@ -38,6 +41,18 @@ func main() {
 func run() (err error) {
 	// initialize http client
 	hcl = http.Client{}
+
+	// initialize mysql
+	mysqldb, err = sql.Open("mysql", "root:root@tcp(mysql:3306)/test")
+	if err != nil {
+		return err
+	}
+	if err = mysqldb.Ping(); err != nil {
+		return err
+	}
+	defer func() {
+		_ = mysqldb.Close()
+	}()
 
 	// initialize redis
 	rdb = redis.NewClient(&redis.Options{
@@ -124,6 +139,7 @@ func newHTTPHandler() http.Handler {
 	handleFunc("/param/{param}", paramFunc)
 	handleFunc("/exception", exceptionFunc)
 	handleFunc("/api", apiFunc)
+	handleFunc("/mysql", mysqlFunc)
 	handleFunc("/redis", redisFunc)
 	handleFunc("/mongo", mongoFunc)
 	handleFunc("/clickhouse", clickhouseFunc)
@@ -158,6 +174,19 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "Got api: %s", respBody)
 		}
 	}
+}
+
+func mysqlFunc(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var now string
+	err := mysqldb.QueryRowContext(ctx, "SELECT NOW()").Scan(&now)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("MySQL query error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "MySQL called: %s", now)
 }
 
 func redisFunc(w http.ResponseWriter, r *http.Request) {
