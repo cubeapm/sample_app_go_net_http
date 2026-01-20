@@ -14,6 +14,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
@@ -22,6 +24,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
+	"go.elastic.co/apm/module/apmchiv5"
 	"go.elastic.co/apm/module/apmhttp/v2"
 	"go.elastic.co/apm/module/apmmongo/v2"
 	"go.elastic.co/apm/v2"
@@ -30,6 +33,7 @@ import (
 const kafkaTopicName = "sample_topic"
 
 var (
+	// hcl     *resty.Client
 	hcl     http.Client
 	mysqldb *sql.DB
 	rdb     *redis.Client
@@ -45,7 +49,10 @@ func main() {
 }
 
 func run() (err error) {
-	// initialize http client
+
+	// hcl = resty.New()
+	// hcl.SetTransport(apmhttp.WrapRoundTripper(http.DefaultTransport))
+
 	hcl = *apmhttp.WrapClient(&http.Client{})
 
 	// initialize mysql
@@ -108,7 +115,7 @@ func run() (err error) {
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 		ReadTimeout:  time.Second,
 		WriteTimeout: 10 * time.Second,
-		Handler:      apmhttp.Wrap(newHTTPHandler()),
+		Handler:      InitRoutes(),
 	}
 	srvErr := make(chan error, 1)
 	go func() {
@@ -131,47 +138,71 @@ func run() (err error) {
 	return
 }
 
-func newHTTPHandler() http.Handler {
-	mux := http.NewServeMux()
+func InitRoutes() *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
-	// handleFunc is a replacement for mux.HandleFunc
-	// which enriches the handler's HTTP instrumentation.
-	handleFunc := func(pattern string, handlerFunc func(http.ResponseWriter, *http.Request)) {
-		mux.HandleFunc(pattern, handlerFunc)
-	}
+	// Start parent transaction in middleware and attach to context
+	// apmchiv5.Middleware() automatically sets transaction names based on route
+	r.Use(apmchiv5.Middleware())
 
-	// Register handlers.
-	handleFunc("/", indexFunc)
-	handleFunc("/param/{param}", paramFunc)
-	handleFunc("/exception", exceptionFunc)
-	handleFunc("/api", apiFunc)
-	handleFunc("/mysql", mysqlFunc)
-	handleFunc("/redis", redisFunc)
-	handleFunc("/mongo", mongoFunc)
-	handleFunc("/clickhouse", clickhouseFunc)
-	handleFunc("/kafka/produce", kafkaProduceFunc)
-	handleFunc("/kafka/consume", kafkaConsumeFunc)
+	// Register all handlers
+	r.Get("/", indexFunc)
+	r.Get("/param/{param}", paramFunc)
+	r.Get("/exception", exceptionFunc)
+	r.Get("/api", apiFunc)
+	r.Get("/mysql", mysqlFunc)
+	r.Get("/redis", redisFunc)
+	r.Get("/mongo", mongoFunc)
+	r.Get("/clickhouse", clickhouseFunc)
+	r.Post("/kafka/produce", kafkaProduceFunc)
+	r.Get("/kafka/consume", kafkaConsumeFunc)
 
-	return mux
+	// Additional routes
+	r.Get("/get", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("welcome get"))
+	})
+	r.Post("/post", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("welcome post"))
+	})
+	r.Get("/500", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("welcome 500"))
+	})
+
+	return r
 }
 
 func indexFunc(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	// Start a custom span named "indexFunc"
-	span, ctx := apm.StartSpan(ctx, "indexFunc", "handler")
-	defer span.End()
 	if _, err := io.WriteString(w, "index called"); err != nil {
 		log.Printf("Write failed: %v\n", err)
 	}
 }
 
 func paramFunc(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	// Start custom span
-	span, ctx := apm.StartSpan(ctx, "paramFunc", "handler")
-	defer span.End()
-	param := r.PathValue("param")
-	fmt.Fprintf(w, "Got param: %s", param)
+	param := chi.URLParam(r, "param")
+	req, err := http.NewRequestWithContext(
+		r.Context(),
+		http.MethodGet,
+		"http://go_net_http:8000/api",
+		nil,
+	)
+
+	// resp, err := hcl.R().SetContext(r.Context()).Get("http://go_net_http:8000/api")
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err == nil {
+			fmt.Fprintf(w, "Got api: %s", respBody)
+		}
+
+		fmt.Fprintf(w, "Got param: %s, API response: %s", param, respBody)
+	} else {
+		fmt.Fprintf(w, "Got param: %s, API call error: %v", param, err)
+	}
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +213,11 @@ func exceptionFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func apiFunc(w http.ResponseWriter, r *http.Request) {
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://localhost:8000/", nil)
+	// resp, err := hcl.SetContext(r.Context()).Get("http://go_net_http:8000/")
+	// if err == nil {
+	// 	fmt.Fprintf(w, "Got api: %s", resp.String())
+	// }
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://go_net_http:8000/", nil)
 	resp, err := hcl.Do(req)
 	if err == nil {
 		defer resp.Body.Close()
