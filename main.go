@@ -25,7 +25,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	"github.com/go-resty/resty/v2"
-	"go.elastic.co/apm/module/apmchiv5"
+	"go.elastic.co/apm/module/apmchiv5/v2"
 	"go.elastic.co/apm/module/apmhttp/v2"
 	"go.elastic.co/apm/module/apmmongo/v2"
 	"go.elastic.co/apm/v2"
@@ -34,8 +34,7 @@ import (
 const kafkaTopicName = "sample_topic"
 
 var (
-	hcl *resty.Client
-	// hcl     http.Client
+	hcl     *resty.Client
 	mysqldb *sql.DB
 	rdb     *redis.Client
 	mdb     *mongo.Client
@@ -112,9 +111,8 @@ func run() (err error) {
 
 	router := InitRoutes()
 
-	// Wrap the entire router with apmhttp.Wrap
-	// This captures the request at the very edge of your application
-	wrappedHandler := apmhttp.Wrap(router)
+	// IMPORTANT: DO NOT WRAP ROUTER IF USING CHI.. WE NEED TO USE apmchiv5.Middleware()
+	// wrappedHandler := apmhttp.Wrap(router)
 
 	// Start HTTP server.
 	srv := &http.Server{
@@ -122,7 +120,7 @@ func run() (err error) {
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 		ReadTimeout:  time.Second,
 		WriteTimeout: 10 * time.Second,
-		Handler:      wrappedHandler,
+		Handler:      router,
 	}
 	srvErr := make(chan error, 1)
 	go func() {
@@ -189,23 +187,9 @@ func indexFunc(w http.ResponseWriter, r *http.Request) {
 
 func paramFunc(w http.ResponseWriter, r *http.Request) {
 	param := chi.URLParam(r, "param")
-	// req, err := http.NewRequestWithContext(
-	// 	r.Context(),
-	// 	http.MethodGet,
-	// 	"http://go_net_http:8000/api",
-	// 	nil,
-	// )
 
 	resp, err := hcl.R().SetContext(r.Context()).Get("http://go_net_http:8000/api")
-	// resp, err := hcl.Do(req)
 	if err == nil {
-
-		// defer resp.Body.Close()
-		// respBody, err := io.ReadAll(resp.Body)
-		// if err == nil {
-		// 	fmt.Fprintf(w, "Got api: %s", respBody)
-		// }
-
 		fmt.Fprintf(w, "Got param: %s, API response: %s", param, resp.String())
 	} else {
 		fmt.Fprintf(w, "Got param: %s, API call error: %v", param, err)
@@ -224,15 +208,6 @@ func apiFunc(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		fmt.Fprintf(w, "Got api: %s", resp.String())
 	}
-	// req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://go_net_http:8000/", nil)
-	// resp, err := hcl.Do(req)
-	// if err == nil {
-	// 	defer resp.Body.Close()
-	// 	respBody, err := io.ReadAll(resp.Body)
-	// 	if err == nil {
-	// 		fmt.Fprintf(w, "Got api: %s", respBody)
-	// 	}
-	// }
 }
 
 func mysqlFunc(w http.ResponseWriter, r *http.Request) {
