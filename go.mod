@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.0
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/newrelic/go-agent/v3 v3.38.0
+	github.com/newrelic/go-agent/v3 v3.42.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/segmentio/kafka-go v0.4.47
 	go.mongodb.org/mongo-driver v1.17.1
@@ -23,6 +23,8 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
+	github.com/newrelic/go-agent/v3/integrations/logcontext-v2/logWriter v1.0.3
+	github.com/newrelic/go-agent/v3/integrations/logcontext-v2/nrwriter v1.0.2 // indirect
 	github.com/paulmach/orb v0.11.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

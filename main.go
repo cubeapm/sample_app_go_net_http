@@ -16,6 +16,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/newrelic/go-agent/v3/integrations/logcontext-v2/logWriter"
 	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
@@ -34,6 +35,9 @@ var rdb *redis.Client
 var mdb *mongo.Client
 var ccn driver.Conn
 var kcn *kafka.Conn
+
+// ref: https://docs.newrelic.com/docs/logs/logs-context/configure-logs-context-go/
+var nrLogWriter logWriter.LogWriter
 
 func main() {
 	if err := run(); err != nil {
@@ -100,6 +104,8 @@ func run() (err error) {
 		newrelic.ConfigFromEnvironment(),
 	)
 
+	nrLogWriter = logWriter.New(os.Stdout, app)
+
 	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -159,7 +165,12 @@ func newHTTPHandler(app *newrelic.Application) http.Handler {
 }
 
 func indexFunc(w http.ResponseWriter, r *http.Request) {
-	log.Printf("home endpoint called")
+	logger := log.New(
+		nrLogWriter.WithContext(r.Context()),
+		"",
+		log.Default().Flags(),
+	)
+	logger.Printf("home endpoint called")
 	if _, err := io.WriteString(w, "index called"); err != nil {
 		log.Printf("Write failed: %v\n", err)
 	}
@@ -171,7 +182,12 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
-	log.Printf("exception endpoint called")
+	logger := log.New(
+		nrLogWriter.WithContext(r.Context()),
+		"",
+		log.Default().Flags(),
+	)
+	logger.Printf("exception endpoint called")
 	txn := newrelic.FromContext(r.Context())
 	if txn != nil {
 		txn.NoticeError(errors.New("Something broke"))

@@ -10,6 +10,15 @@ services:
       - NEW_RELIC_APP_NAME=cube_sample_go_net_http_newrelic
       - NEW_RELIC_LICENSE_KEY=ABC4567890ABC4567890ABC4567890ABC4567890
 
+      # https://docs.newrelic.com/docs/logs/logs-context/configure-logs-context-go/
+      # process logs
+      - NEW_RELIC_APPLICATION_LOGGING_ENABLED=true
+      # send logs directly to CubeAPM
+      - NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED=true
+      # add the following to logs
+      # NR-LINKING|{app_guid}|{hostname}|{trace_id}|{span_id}|{app_name}|
+      - NEW_RELIC_APPLICATION_LOGGING_LOCAL_DECORATING_ENABLED=true
+
       # Print New Relic agent logs on screen
       # - NEW_RELIC_LOG=stdout
       # Set New Relic agent log level to debug if needed to see detailed logs
