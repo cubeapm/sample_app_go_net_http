@@ -150,6 +150,7 @@ func newHTTPHandler() http.Handler {
 }
 
 func indexFunc(w http.ResponseWriter, r *http.Request) {
+	log.Printf("home endpoint called")
 	if _, err := io.WriteString(w, "index called"); err != nil {
 		log.Printf("Write failed: %v\n", err)
 	}
@@ -161,6 +162,7 @@ func paramFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func exceptionFunc(w http.ResponseWriter, r *http.Request) {
+	log.Printf("exception endpoint called")
 	w.WriteHeader(http.StatusInternalServerError)
 }
 

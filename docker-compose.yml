@@ -24,7 +24,7 @@ services:
       - cube_go_net_http_mysql:/var/lib/mysql
     ports:
       - "3306:3306"
-    
+
   redis:
     image: redis:alpine3.18
     container_name: cube_go_net_http_redis
