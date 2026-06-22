@@ -10,6 +10,9 @@ services:
       # Send data to Datadog Agent
       - DD_AGENT_HOST=datadog-agent
 
+      #Send traces to CubeAPM using datadog tracer
+      # - DD_TRACE_AGENT_URL=http://host.docker.internal:3130
+
       # Enable Runtime metrics
       - DD_RUNTIME_METRICS_ENABLED=true
       - DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED=true
@@ -46,6 +49,14 @@ services:
       # send traces to CubeAPM
       - DD_APM_DD_URL=http://host.docker.internal:3130
 
+      # send logs to CubeAPM
+      - DD_LOGS_CONFIG_LOGS_DD_URL=http://host.docker.internal:3130
+      - DD_LOGS_ENABLED=true
+      - DD_LOGS_INJECTION=true
+      - DD_LOGS_CONFIG_USE_HTTP=true
+      - DD_LOGS_CONFIG_LOGS_NO_SSL=true
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+
       # Accept traces and metrics from applications running outside the agent host
       - DD_APM_NON_LOCAL_TRAFFIC=true
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
@@ -63,7 +74,7 @@ services:
     volumes:
       - cube_go_net_http_mysql:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "33066:33066"
     
   redis:
     image: redis:alpine3.18
